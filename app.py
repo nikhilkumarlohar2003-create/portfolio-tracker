@@ -189,20 +189,30 @@ def get_portfolio_beta(holdings_tuple):
 
 
 @st.cache_data(ttl=3600)
-def get_dividend_income(holdings_tuple):
-    """Returns dict {symbol: total_dividend_income} and grand total."""
-    holdings = list(holdings_tuple)
+def get_dividend_income(lots_tuple):
+    """
+    Accurate per-lot dividend calc.
+    lots_tuple: ((symbol, qty, buy_date_str), ...)  — one entry per transaction lot.
+    Returns dict {symbol: total_dividend_income}.
+    """
+    # group lots by symbol
+    by_sym: dict = {}
+    for sym, qty, date_str in lots_tuple:
+        by_sym.setdefault(sym, []).append((qty, date_str))
+
     result = {}
-    for sym, qty, buy_date_str in holdings:
+    for sym, lots in by_sym.items():
         try:
             divs = sd.get_dividends(sym)
             if divs.empty:
                 result[sym] = 0.0
                 continue
             divs.index = pd.to_datetime(divs.index).tz_localize(None)
-            buy_dt = pd.to_datetime(buy_date_str)
-            filtered = divs[divs.index >= buy_dt]
-            result[sym] = round(float(filtered.sum()) * qty, 2)
+            total = 0.0
+            for qty, date_str in lots:
+                buy_dt = pd.to_datetime(date_str)
+                total += float(divs[divs.index >= buy_dt].sum()) * qty
+            result[sym] = round(total, 2)
         except Exception:
             result[sym] = 0.0
     return result
@@ -668,9 +678,14 @@ if page == "Dashboard":
     # ════════════════════════════════════════════════════════
     # SECTION 7: DIVIDEND INCOME
     # ════════════════════════════════════════════════════════
-    theme.section_header("Dividend Income", "since buy date · from yfinance")
+    theme.section_header("Dividend Income", "per lot since purchase date · from yfinance")
 
-    div_input = tuple((r["Symbol"], r["Qty"], r["_buy_date"]) for r in rows)
+    # build per-lot tuples from transactions table for accurate dividend calc
+    _all_txns = db.get_transactions()
+    _buy_lots = [(t["symbol"], t["quantity"], t["date"])
+                 for t in _all_txns if t["action"] in ("BUY", "BONUS")]
+    div_input = tuple(_buy_lots) if _buy_lots else tuple(
+        (r["Symbol"], r["Qty"], r["_buy_date"]) for r in rows)
     with st.spinner("Calculating dividends…"):
         div_data = get_dividend_income(div_input)
 
