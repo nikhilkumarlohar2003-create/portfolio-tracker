@@ -434,76 +434,159 @@ if page == "Dashboard":
     # ════════════════════════════════════════════════════════
     # SECTION 4: SECTOR PIE + BEST/WORST + PROFIT/LOSS SPLIT
     # ════════════════════════════════════════════════════════
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3 = st.columns([1.15, 1.15, 0.7])
+
+    _SECTOR_COLORS = ["#00d2b4","#3b82f6","#f0a500","#f05252","#a855f7",
+                      "#10c98f","#64748b","#e879f9","#fb923c","#34d399",
+                      "#60a5fa","#fbbf24","#f87171","#818cf8","#4ade80"]
 
     with c1:
         theme.section_header("Sector Allocation")
         sec_df = df.groupby("Sector")["Current Value"].sum().reset_index()
-        sec_df = sec_df[sec_df["Sector"] != ""]
+        sec_df = sec_df[sec_df["Sector"] != ""].sort_values("Current Value", ascending=False).reset_index(drop=True)
         if not sec_df.empty:
-            fig_sec = px.pie(sec_df, names="Sector", values="Current Value", hole=0.45,
-                             color_discrete_sequence=["#00d2b4","#3b82f6","#f0a500",
-                                                       "#f05252","#a855f7","#10c98f","#64748b"])
+            total_sec = sec_df["Current Value"].sum()
+            sec_df["Pct"] = sec_df["Current Value"] / total_sec * 100
+
+            fig_sec = px.pie(sec_df, names="Sector", values="Current Value", hole=0.5,
+                             color_discrete_sequence=_SECTOR_COLORS)
+            fig_sec.update_traces(
+                textinfo="percent",
+                textfont_size=11,
+                textfont_color=theme.TEXT_PRI,
+                hovertemplate="<b>%{label}</b><br>₹%{value:,.0f}<br>%{percent}<extra></extra>",
+            )
             fig_sec.update_layout(**{**theme.PLOTLY_LAYOUT,
-                                   "margin": dict(t=10, b=0, l=0, r=0), "height": 280})
-            fig_sec.update_traces(textfont_color=theme.TEXT_PRI)
+                                   "margin": dict(t=10, b=8, l=0, r=0),
+                                   "height": 230,
+                                   "showlegend": False})
             st.plotly_chart(fig_sec, use_container_width=True)
+
+            # compact two-column legend below chart
+            legend_items = []
+            for i, row in sec_df.iterrows():
+                color = _SECTOR_COLORS[i % len(_SECTOR_COLORS)]
+                legend_items.append(
+                    f'<div style="display:flex;align-items:center;gap:5px;min-width:140px">'
+                    f'<div style="width:7px;height:7px;border-radius:50%;background:{color};flex-shrink:0"></div>'
+                    f'<span style="font-size:10px;color:{theme.TEXT_SEC};white-space:nowrap">'
+                    f'{row["Sector"]} '
+                    f'<span style="color:{theme.TEXT_MUTED}">{row["Pct"]:.1f}%</span></span>'
+                    f'</div>'
+                )
+            legend_html = (
+                '<div style="display:flex;flex-wrap:wrap;gap:5px 0px;margin-top:2px">'
+                + "".join(legend_items)
+                + '</div>'
+            )
+            st.markdown(legend_html, unsafe_allow_html=True)
         else:
             st.caption("Add sectors when entering holdings to see this chart.")
 
     with c2:
         theme.section_header("Performance")
-        best = df.nlargest(5, "P&L %")[["Symbol", "P&L %", "P&L"]]
-        for _, r in best.iterrows():
-            st.markdown(
-                f"**{r['Symbol']}** &nbsp; {delta_badge(r['P&L %'])} &nbsp;"
-                f"<span style='color:{theme.TEXT_MUTED};font-size:11px'>({fmt_inr(r['P&L'])})</span>",
-                unsafe_allow_html=True,
+
+        # Best performers
+        best = df.nlargest(5, "P&L %")[["Symbol", "P&L %", "P&L"]].reset_index(drop=True)
+        rows_html = '<div style="display:flex;flex-direction:column;gap:4px">'
+        for i, r in best.iterrows():
+            rows_html += (
+                f'<div style="display:flex;align-items:center;justify-content:space-between;'
+                f'padding:7px 10px;background:{theme.BG_CARD};border-radius:8px;'
+                f'border-left:3px solid {theme.GREEN}">'
+                f'<div style="display:flex;align-items:center;gap:8px">'
+                f'<span style="font-size:10px;font-weight:600;color:{theme.TEXT_MUTED};width:13px">{i+1}</span>'
+                f'<span style="font-size:13px;font-weight:600;color:{theme.TEXT_PRI}">{r["Symbol"]}</span>'
+                f'</div>'
+                f'<div style="text-align:right">'
+                f'<div style="font-size:13px;font-weight:600;color:{theme.GREEN}">▲ {abs(r["P&L %"]):.2f}%</div>'
+                f'<div style="font-size:10px;color:{theme.TEXT_MUTED}">+{fmt_inr(r["P&L"])}</div>'
+                f'</div></div>'
             )
+        rows_html += '</div>'
+        st.markdown(rows_html, unsafe_allow_html=True)
 
         st.markdown(
-            f'<div style="font-size:11px;font-weight:600;color:{theme.TEXT_MUTED};'
-            f'text-transform:uppercase;letter-spacing:0.08em;margin:12px 0 6px">Worst</div>',
+            f'<div style="font-size:10px;font-weight:600;color:{theme.TEXT_MUTED};'
+            f'text-transform:uppercase;letter-spacing:0.08em;margin:10px 0 5px">Worst Performers</div>',
             unsafe_allow_html=True)
-        worst = df.nsmallest(5, "P&L %")[["Symbol", "P&L %", "P&L"]]
-        for _, r in worst.iterrows():
-            st.markdown(
-                f"**{r['Symbol']}** &nbsp; {delta_badge(r['P&L %'])} &nbsp;"
-                f"<span style='color:{theme.TEXT_MUTED};font-size:11px'>({fmt_inr(r['P&L'])})</span>",
-                unsafe_allow_html=True,
+
+        worst = df.nsmallest(5, "P&L %")[["Symbol", "P&L %", "P&L"]].reset_index(drop=True)
+        rows_html2 = '<div style="display:flex;flex-direction:column;gap:4px">'
+        for i, r in worst.iterrows():
+            rows_html2 += (
+                f'<div style="display:flex;align-items:center;justify-content:space-between;'
+                f'padding:7px 10px;background:{theme.BG_CARD};border-radius:8px;'
+                f'border-left:3px solid {theme.RED}">'
+                f'<div style="display:flex;align-items:center;gap:8px">'
+                f'<span style="font-size:10px;font-weight:600;color:{theme.TEXT_MUTED};width:13px">{i+1}</span>'
+                f'<span style="font-size:13px;font-weight:600;color:{theme.TEXT_PRI}">{r["Symbol"]}</span>'
+                f'</div>'
+                f'<div style="text-align:right">'
+                f'<div style="font-size:13px;font-weight:600;color:{theme.RED}">▼ {abs(r["P&L %"]):.2f}%</div>'
+                f'<div style="font-size:10px;color:{theme.TEXT_MUTED}">{fmt_inr(r["P&L"])}</div>'
+                f'</div></div>'
             )
+        rows_html2 += '</div>'
+        st.markdown(rows_html2, unsafe_allow_html=True)
 
     with c3:
-        theme.section_header("Profit vs Loss")
+        theme.section_header("Profit / Loss")
         in_profit = len(df[df["P&L"] > 0])
         in_loss = len(df[df["P&L"] < 0])
         breakeven = len(df[df["P&L"] == 0])
         fig_pl = go.Figure(go.Pie(
-            labels=["In Profit", "In Loss", "Breakeven"],
-            values=[in_profit, in_loss, breakeven],
-            hole=0.55,
+            labels=["Profit", "Loss", "Even"],
+            values=[max(in_profit, 0.001), max(in_loss, 0.001), max(breakeven, 0.001)],
+            hole=0.62,
             marker_colors=[theme.GREEN, theme.RED, theme.TEXT_MUTED],
         ))
-        fig_pl.add_annotation(text=f"{in_profit}/{len(df)}<br>profit",
-                              x=0.5, y=0.5, showarrow=False,
-                              font=dict(size=12, color=theme.GREEN))
+        fig_pl.add_annotation(
+            text=f"<b>{in_profit}/{len(df)}</b><br><span style='font-size:10px'>profit</span>",
+            x=0.5, y=0.5, showarrow=False,
+            font=dict(size=13, color=theme.GREEN),
+        )
         fig_pl.update_layout(**{**theme.PLOTLY_LAYOUT,
-                               "margin": dict(t=10, b=0, l=0, r=0), "height": 200,
-                               "showlegend": True})
+                               "margin": dict(t=10, b=0, l=0, r=0),
+                               "height": 200,
+                               "showlegend": True,
+                               "legend": dict(
+                                   orientation="h",
+                                   yanchor="bottom", y=-0.18,
+                                   xanchor="center", x=0.5,
+                                   font=dict(size=10, color=theme.TEXT_SEC),
+                               )})
         st.plotly_chart(fig_pl, use_container_width=True)
 
         theme.section_header("Today's Movers")
         today_sorted = df.sort_values("Day Change %", ascending=False)
-        top_gainer = today_sorted.iloc[0]
-        top_loser = today_sorted.iloc[-1]
-        st.markdown(
-            f"Best: **{top_gainer['Symbol']}** {delta_badge(top_gainer['Day Change %'])}",
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            f"Worst: **{top_loser['Symbol']}** {delta_badge(top_loser['Day Change %'])}",
-            unsafe_allow_html=True
-        )
+        gainers = today_sorted.head(3)
+        losers = today_sorted.tail(3).iloc[::-1]
+
+        movers_html = '<div style="display:flex;flex-direction:column;gap:4px">'
+        for _, r in gainers.iterrows():
+            c = theme.GREEN if r["Day Change %"] >= 0 else theme.RED
+            a = "▲" if r["Day Change %"] >= 0 else "▼"
+            movers_html += (
+                f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                f'padding:5px 8px;background:{theme.BG_CARD};border-radius:6px">'
+                f'<span style="font-size:12px;font-weight:600;color:{theme.TEXT_PRI}">{r["Symbol"]}</span>'
+                f'<span style="font-size:12px;font-weight:600;color:{c}">{a} {abs(r["Day Change %"]):.2f}%</span>'
+                f'</div>'
+            )
+        movers_html += f'<div style="height:1px;background:{theme.BORDER};margin:2px 0"></div>'
+        for _, r in losers.iterrows():
+            c = theme.GREEN if r["Day Change %"] >= 0 else theme.RED
+            a = "▲" if r["Day Change %"] >= 0 else "▼"
+            movers_html += (
+                f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                f'padding:5px 8px;background:{theme.BG_CARD};border-radius:6px">'
+                f'<span style="font-size:12px;font-weight:600;color:{theme.TEXT_PRI}">{r["Symbol"]}</span>'
+                f'<span style="font-size:12px;font-weight:600;color:{c}">{a} {abs(r["Day Change %"]):.2f}%</span>'
+                f'</div>'
+            )
+        movers_html += '</div>'
+        st.markdown(movers_html, unsafe_allow_html=True)
 
     st.markdown("---")
 
