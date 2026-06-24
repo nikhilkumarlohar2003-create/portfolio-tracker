@@ -244,7 +244,8 @@ def get_dividend_income(lots_tuple):
             if divs.empty:
                 result[sym] = 0.0
                 continue
-            divs.index = pd.to_datetime(divs.index).tz_localize(None)
+            idx = pd.to_datetime(divs.index)
+            divs.index = idx.tz_convert(None) if idx.tz is not None else idx
             total = 0.0
             for qty, date_str in lots:
                 buy_dt = pd.to_datetime(date_str)
