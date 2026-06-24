@@ -34,12 +34,10 @@ PLOTLY_LAYOUT = dict(
 
 CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
-
 /* ── global ─────────────────────────────────────────────────── */
 html, body, .stApp {{
     background-color: {BG_APP} !important;
-    font-family: 'Inter', 'Segoe UI', sans-serif !important;
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif !important;
     color: {TEXT_PRI} !important;
 }}
 

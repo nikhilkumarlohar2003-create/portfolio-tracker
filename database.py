@@ -1,7 +1,15 @@
 import os
 
-# Auto-detect: if SUPABASE_URL is set, use cloud DB; otherwise use local SQLite
-_USE_CLOUD = bool(os.getenv("SUPABASE_URL"))
+def _check_cloud():
+    if os.getenv("SUPABASE_URL"):
+        return True
+    try:
+        import streamlit as st
+        return bool(st.secrets.get("SUPABASE_URL", ""))
+    except Exception:
+        return False
+
+_USE_CLOUD = _check_cloud()
 
 if _USE_CLOUD:
     from _db_supabase import (
