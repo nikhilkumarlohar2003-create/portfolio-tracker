@@ -138,6 +138,81 @@ def get_stock_news(symbol: str) -> list:
         return []
 
 
+def get_corporate_events(symbol: str) -> dict:
+    """
+    Fetch upcoming corporate events for an NSE stock.
+    Returns dict with ex_dividend_date, dividend_date, last_dividend,
+    annual_dividend, and earnings_date (from yfinance calendar).
+    """
+    ticker = yf.Ticker(nse_symbol(symbol))
+    result = {
+        "ex_dividend_date": None,
+        "dividend_date": None,
+        "last_dividend": 0.0,
+        "annual_dividend": 0.0,
+        "earnings_date": None,
+    }
+    try:
+        info = ticker.info
+        ex_div = info.get("exDividendDate")
+        if ex_div:
+            result["ex_dividend_date"] = pd.Timestamp(ex_div, unit="s").strftime("%Y-%m-%d")
+        div_date = info.get("dividendDate")
+        if div_date:
+            result["dividend_date"] = pd.Timestamp(div_date, unit="s").strftime("%Y-%m-%d")
+        result["last_dividend"]  = float(info.get("lastDividendValue") or 0)
+        result["annual_dividend"] = float(info.get("trailingAnnualDividendRate") or 0)
+    except Exception:
+        pass
+    try:
+        cal = ticker.calendar
+        if cal is not None:
+            if isinstance(cal, dict):
+                dates = cal.get("Earnings Date") or cal.get("earnings_date", [])
+                if dates:
+                    result["earnings_date"] = str(dates[0])[:10]
+            elif hasattr(cal, "columns") and not cal.empty:
+                if "Earnings Date" in cal.columns:
+                    d = cal["Earnings Date"].dropna()
+                    if not d.empty:
+                        result["earnings_date"] = str(d.iloc[0])[:10]
+    except Exception:
+        pass
+    return result
+
+
+def get_estimated_results_dates(today: "datetime | None" = None) -> list[dict]:
+    """
+    Returns a list of estimated quarterly results announcement dates for
+    Indian listed companies (BSE/NSE) based on SEBI timelines.
+    Each company must report within 45 days of quarter end (60 days for Q4).
+    Returns the LAST day of each window as the 'deadline' estimate.
+    """
+    if today is None:
+        today = datetime.now()
+
+    # Indian FY: Apr–Mar.  Quarter ends and SEBI reporting deadlines:
+    # Q1 Apr–Jun  → Aug 14   Q2 Jul–Sep → Nov 14
+    # Q3 Oct–Dec  → Feb 14   Q4 Jan–Mar → May 30
+    quarters = [
+        ("Q1", "Apr–Jun",   (today.year,  8, 14)),
+        ("Q2", "Jul–Sep",   (today.year, 11, 14)),
+        ("Q3", "Oct–Dec",   (today.year + 1, 2, 14)),
+        ("Q4", "Jan–Mar",   (today.year + 1, 5, 30)),
+    ]
+    result = []
+    for label, period, (yr, mo, dy) in quarters:
+        dt = datetime(yr, mo, dy)
+        if dt >= today:
+            result.append({
+                "quarter": label,
+                "period":  period,
+                "deadline": dt.strftime("%Y-%m-%d"),
+                "days_away": (dt - today).days,
+            })
+    return result
+
+
 def check_alerts(holdings: list, alerts: list) -> list:
     triggered = []
     symbols = list({h["symbol"] for h in holdings})

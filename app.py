@@ -226,6 +226,15 @@ def get_portfolio_beta(holdings_tuple):
 
 
 @st.cache_data(ttl=3600)
+def fetch_all_corporate_events(symbols_tuple: tuple) -> dict:
+    """Fetch corporate events for all holdings. Returns {symbol: event_dict}."""
+    result = {}
+    for sym in symbols_tuple:
+        result[sym] = sd.get_corporate_events(sym)
+    return result
+
+
+@st.cache_data(ttl=3600)
 def get_dividend_income(lots_tuple):
     """
     Accurate per-lot dividend calc.
@@ -985,7 +994,7 @@ elif page == "Notifications & Alerts":
                     db.trigger_alert(t["id"])
                     st.rerun()
 
-    tab1, tab2, tab3 = st.tabs(["Set Alert", "Active Alerts", "Stock News"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Set Alert", "Active Alerts", "Stock News", "Important Dates"])
 
     with tab1:
         st.subheader("Set Price Alert")
@@ -1036,6 +1045,186 @@ elif page == "Notifications & Alerts":
                     st.info("No news found for this stock.")
         else:
             st.info("Add holdings first to see stock news.")
+
+    with tab4:
+        theme.section_header("Important Corporate Dates", "dividends · quarterly results · for your holdings")
+
+        if not all_symbols:
+            st.info("Add holdings to see corporate events.")
+        else:
+            today_dt = datetime.now()
+
+            with st.spinner("Fetching corporate events for all holdings…"):
+                events_raw = fetch_all_corporate_events(tuple(all_symbols))
+
+            # ── build unified event list ─────────────────────────────────────
+            all_events = []
+
+            for sym, ev in events_raw.items():
+                # Ex-dividend date
+                if ev.get("ex_dividend_date"):
+                    try:
+                        dt = datetime.strptime(ev["ex_dividend_date"], "%Y-%m-%d")
+                        days = (dt - today_dt).days
+                        all_events.append({
+                            "date": ev["ex_dividend_date"],
+                            "symbol": sym,
+                            "event": "Ex-Dividend",
+                            "detail": f"₹{ev['last_dividend']:.2f}/share" if ev["last_dividend"] else "—",
+                            "days_away": days,
+                            "type": "dividend",
+                        })
+                    except Exception:
+                        pass
+
+                # Dividend payment date
+                if ev.get("dividend_date"):
+                    try:
+                        dt = datetime.strptime(ev["dividend_date"], "%Y-%m-%d")
+                        days = (dt - today_dt).days
+                        all_events.append({
+                            "date": ev["dividend_date"],
+                            "symbol": sym,
+                            "event": "Dividend Payment",
+                            "detail": f"₹{ev['annual_dividend']:.2f} annual" if ev["annual_dividend"] else "—",
+                            "days_away": days,
+                            "type": "dividend",
+                        })
+                    except Exception:
+                        pass
+
+                # Earnings/Results date from yfinance
+                if ev.get("earnings_date"):
+                    try:
+                        dt = datetime.strptime(ev["earnings_date"][:10], "%Y-%m-%d")
+                        days = (dt - today_dt).days
+                        all_events.append({
+                            "date": ev["earnings_date"][:10],
+                            "symbol": sym,
+                            "event": "Earnings / Results",
+                            "detail": "Source: yfinance",
+                            "days_away": days,
+                            "type": "results",
+                        })
+                    except Exception:
+                        pass
+
+            # ── add estimated quarterly results deadlines ────────────────────
+            q_dates = sd.get_estimated_results_dates(today_dt)
+            for q in q_dates:
+                for sym in all_symbols:
+                    # only add if yfinance didn't already give an earnings date for this stock
+                    already_has = any(
+                        e["symbol"] == sym and e["type"] == "results"
+                        for e in all_events
+                    )
+                    if not already_has:
+                        all_events.append({
+                            "date": q["deadline"],
+                            "symbol": sym,
+                            "event": f"{q['quarter']} Results Deadline",
+                            "detail": f"SEBI deadline · {q['period']}",
+                            "days_away": q["days_away"],
+                            "type": "results_est",
+                        })
+
+            if not all_events:
+                st.info("No upcoming corporate events found. Data may not be available for all stocks.")
+            else:
+                # Sort by date
+                all_events.sort(key=lambda x: x["date"])
+
+                # ── summary chips ────────────────────────────────────────────
+                soon = [e for e in all_events if 0 <= e["days_away"] <= 30 and e["type"] == "dividend"]
+                if soon:
+                    chip_html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'
+                    for e in soon:
+                        chip_html += (
+                            f'<div style="background:{theme.ACCENT_TEAL}18;border:1px solid {theme.ACCENT_TEAL}40;'
+                            f'border-radius:20px;padding:4px 12px;font-size:12px;color:{theme.ACCENT_TEAL}">'
+                            f'<b>{e["symbol"]}</b> {e["event"]} in {e["days_away"]}d</div>'
+                        )
+                    chip_html += '</div>'
+                    st.markdown(chip_html, unsafe_allow_html=True)
+
+                # ── filter ────────────────────────────────────────────────────
+                f1, f2 = st.columns([2, 1])
+                filter_type = f1.radio(
+                    "Show", ["All", "Dividends Only", "Results Only"],
+                    horizontal=True, label_visibility="collapsed"
+                )
+                filter_sym = f2.selectbox("Stock", ["All stocks"] + all_symbols,
+                                          label_visibility="collapsed")
+
+                filtered = all_events
+                if filter_type == "Dividends Only":
+                    filtered = [e for e in all_events if e["type"] == "dividend"]
+                elif filter_type == "Results Only":
+                    filtered = [e for e in all_events if e["type"] in ("results", "results_est")]
+                if filter_sym != "All stocks":
+                    filtered = [e for e in filtered if e["symbol"] == filter_sym]
+
+                # ── event cards ───────────────────────────────────────────────
+                TYPE_COLOR = {
+                    "dividend":    theme.ACCENT_TEAL,
+                    "results":     theme.ACCENT_BLUE,
+                    "results_est": theme.AMBER,
+                }
+                TYPE_LABEL = {
+                    "dividend":    "DIVIDEND",
+                    "results":     "RESULTS",
+                    "results_est": "EST.",
+                }
+
+                for e in filtered:
+                    days = e["days_away"]
+                    if days < 0:
+                        urgency_color = theme.TEXT_MUTED
+                        urgency_label = f"{abs(days)}d ago"
+                    elif days == 0:
+                        urgency_color = theme.RED
+                        urgency_label = "TODAY"
+                    elif days <= 7:
+                        urgency_color = theme.RED
+                        urgency_label = f"in {days}d"
+                    elif days <= 30:
+                        urgency_color = theme.AMBER
+                        urgency_label = f"in {days}d"
+                    else:
+                        urgency_color = theme.TEXT_MUTED
+                        urgency_label = f"in {days}d"
+
+                    t_color = TYPE_COLOR.get(e["type"], theme.TEXT_MUTED)
+                    t_label = TYPE_LABEL.get(e["type"], "")
+
+                    card = (
+                        f'<div style="display:flex;align-items:center;gap:12px;'
+                        f'padding:10px 14px;background:{theme.BG_CARD};border-radius:10px;'
+                        f'border-left:3px solid {t_color};margin-bottom:5px">'
+                        # date
+                        f'<div style="min-width:90px">'
+                        f'<div style="font-size:13px;font-weight:600;color:{theme.TEXT_PRI}">{e["date"]}</div>'
+                        f'<div style="font-size:10px;color:{urgency_color};font-weight:600">{urgency_label}</div>'
+                        f'</div>'
+                        # type badge
+                        f'<div style="background:{t_color}20;color:{t_color};font-size:9px;font-weight:700;'
+                        f'padding:2px 7px;border-radius:4px;letter-spacing:0.06em;min-width:55px;text-align:center">'
+                        f'{t_label}</div>'
+                        # symbol + event
+                        f'<div style="flex:1">'
+                        f'<span style="font-size:13px;font-weight:700;color:{theme.TEXT_PRI}">{e["symbol"]}</span>'
+                        f'&nbsp;&nbsp;<span style="font-size:12px;color:{theme.TEXT_SEC}">{e["event"]}</span>'
+                        f'</div>'
+                        # detail
+                        f'<div style="font-size:12px;color:{theme.TEXT_MUTED};text-align:right">{e["detail"]}</div>'
+                        f'</div>'
+                    )
+                    st.markdown(card, unsafe_allow_html=True)
+
+                st.caption(
+                    "Dividend dates from yfinance · Results dates marked EST. are SEBI regulatory deadlines "
+                    "(45 days after quarter end), not confirmed board meeting dates."
+                )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
