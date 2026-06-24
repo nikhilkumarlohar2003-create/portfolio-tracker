@@ -1,0 +1,69 @@
+═══════════════════════════════════════════════════
+  PORTFOLIO TRACKER — SETUP GUIDE
+═══════════════════════════════════════════════════
+
+QUICK START
+───────────
+1. Double-click START.bat
+   (First run installs all packages automatically)
+
+MANUAL SETUP (if START.bat doesn't work)
+─────────────────────────────────────────
+1. Open a terminal in this folder
+2. pip install -r requirements.txt
+3. Copy .env.example to .env
+4. Open .env and add your Anthropic API key:
+      ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxx
+5. streamlit run app.py
+
+GET AN ANTHROPIC API KEY (free tier available)
+───────────────────────────────────────────────
+https://console.anthropic.com
+- Sign up → API Keys → Create key
+- Add it to .env
+
+═══════════════════════════════════════════════════
+  FEATURES
+═══════════════════════════════════════════════════
+
+Dashboard
+  - Live portfolio value, P&L, day change
+  - Sector allocation chart
+  - Top gainers/losers
+
+Portfolio
+  - Add/remove holdings (NSE symbols like RELIANCE, TCS)
+  - Log buy/sell transactions
+  - 5-year price chart for any holding
+
+Watchlist
+  - Track stocks you're researching
+  - Live P/E, P/B, ROE, dividend yield
+
+Notifications & Alerts
+  - Set price alerts (above/below target)
+  - Stock-specific news from Yahoo Finance
+
+Document Analysis (requires API key)
+  - Upload annual reports / quarterly results as PDF
+  - Claude extracts: revenue, profit, ROE, ROCE, debt,
+    cash flow, promoter holding, dividends, and more
+  - Full long-term investor analysis with moat analysis,
+    risk assessment, management quality, growth outlook
+  - Compare multiple years to spot trends
+  - Ask questions about any uploaded report
+
+Market News
+  - Latest from Economic Times, Moneycontrol, NDTV Profit
+
+═══════════════════════════════════════════════════
+  ADDING STOCKS
+═══════════════════════════════════════════════════
+
+Use NSE symbols WITHOUT the .NS suffix:
+  RELIANCE, TCS, INFY, HDFCBANK, TATAMOTORS,
+  WIPRO, ICICIBANK, BAJFINANCE, ASIANPAINT, etc.
+
+The app adds .NS automatically for NSE data.
+
+═══════════════════════════════════════════════════

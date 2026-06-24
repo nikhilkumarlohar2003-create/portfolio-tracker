@@ -1,0 +1,7 @@
+-- Run this in Supabase SQL Editor to allow your app to read/write data
+
+ALTER TABLE holdings DISABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE price_alerts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE documents DISABLE ROW LEVEL SECURITY;
+ALTER TABLE watchlist DISABLE ROW LEVEL SECURITY;
