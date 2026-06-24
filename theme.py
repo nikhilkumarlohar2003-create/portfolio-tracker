@@ -220,9 +220,6 @@ hr {{
     border-radius: 10px !important;
     overflow: hidden !important;
 }}
-.dvn-scroller {{
-    background: {BG_CARD} !important;
-}}
 
 /* ── alerts / info boxes ─────────────────────────────────────── */
 [data-testid="stAlert"] {{
