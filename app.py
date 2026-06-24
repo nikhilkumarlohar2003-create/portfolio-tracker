@@ -133,27 +133,64 @@ def calculate_xirr(cashflows_list):
 
 
 @st.cache_data(ttl=3600)
-def get_benchmark_data(holdings_tuple, start_date: str):
-    """Returns DataFrame with Portfolio and Nifty 50 normalized to 100."""
-    holdings = list(holdings_tuple)
-    yf_symbols = [sd.nse_symbol(h[0]) for h in holdings] + ["^NSEI"]
+def get_benchmark_data(transactions_tuple):
+    """
+    Money-weighted portfolio vs Nifty 50.
+    Each lot enters portfolio on its actual buy date.
+    Nifty benchmark: same rupees invested in Nifty on same dates.
+    Returns DataFrame with Portfolio (₹), Nifty_Equiv (₹), Invested (₹).
+    transactions_tuple: ((symbol, qty, date_str, price), ...)
+    """
+    txns = sorted(transactions_tuple, key=lambda x: x[2])
+    if not txns:
+        return None
+
+    start_date = txns[0][2]
+    symbols = list({t[0] for t in txns})
+    yf_symbols = [sd.nse_symbol(s) for s in symbols] + ["^NSEI"]
+
     try:
         raw = yf.download(yf_symbols, start=start_date, auto_adjust=True, progress=False)
         if raw.empty:
             return None
         close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw
-        port = pd.Series(0.0, index=close.index)
-        for sym, qty in holdings:
+        close = close.ffill().bfill()
+
+        # Cumulative shares per stock over time
+        shares_df = pd.DataFrame(0.0, index=close.index, columns=symbols)
+        nifty_units = pd.Series(0.0, index=close.index)
+        invested_s  = pd.Series(0.0, index=close.index)
+
+        for sym, qty, date_str, price in txns:
+            txn_dt = pd.to_datetime(date_str)
+            valid = close.index[close.index >= txn_dt]
+            if valid.empty:
+                continue
+            entry = valid[0]
+            shares_df.loc[entry:, sym] += float(qty)
+            cost = float(price) * float(qty)
+            if cost > 0 and "^NSEI" in close.columns:
+                nifty_px = float(close.loc[entry, "^NSEI"])
+                if nifty_px > 0:
+                    nifty_units.loc[entry:] += cost / nifty_px
+            invested_s.loc[entry:] += cost
+
+        # Portfolio market value
+        port_val = pd.Series(0.0, index=close.index)
+        for sym in symbols:
             col = sd.nse_symbol(sym)
             if col in close.columns:
-                port += close[col].ffill() * qty
-        nifty = close["^NSEI"].ffill() if "^NSEI" in close.columns else None
-        port = port[port > 0]
-        if port.empty or nifty is None:
-            return None
-        df = pd.DataFrame({"Portfolio": port / port.iloc[0] * 100,
-                           "Nifty 50": nifty / nifty.iloc[0] * 100}).dropna()
-        return df
+                port_val += shares_df[sym] * close[col]
+
+        nifty_equiv = nifty_units * close["^NSEI"] if "^NSEI" in close.columns else port_val * 0
+
+        mask = invested_s > 0
+        df = pd.DataFrame({
+            "Portfolio":   port_val[mask],
+            "Nifty_Equiv": nifty_equiv[mask],
+            "Invested":    invested_s[mask],
+        }).dropna()
+        return df if not df.empty else None
     except Exception:
         return None
 
@@ -635,41 +672,64 @@ if page == "Dashboard":
     # ════════════════════════════════════════════════════════
     # SECTION 6: PORTFOLIO vs NIFTY 50
     # ════════════════════════════════════════════════════════
-    theme.section_header("Portfolio vs Nifty 50", f"normalized to 100 from {earliest_date}")
+    theme.section_header("Portfolio vs Nifty 50",
+                         "money-weighted · same capital deployed in Nifty on same dates")
 
-    bench_holdings = tuple((r["Symbol"], r["Qty"]) for r in rows)
+    # build per-lot tuples: (symbol, qty, date, price)
+    _bench_txns = db.get_transactions()
+    _bench_lots = tuple(
+        (t["symbol"], t["quantity"], t["date"], t["price"])
+        for t in _bench_txns if t["action"] in ("BUY",) and float(t["price"] or 0) > 0
+    )
     with st.spinner("Loading benchmark chart (cached for 1 hour)…"):
-        bench_df = get_benchmark_data(bench_holdings, earliest_date)
+        bench_df = get_benchmark_data(_bench_lots) if _bench_lots else None
 
     if bench_df is not None and not bench_df.empty:
-        port_ret = bench_df["Portfolio"].iloc[-1] - 100
-        nifty_ret = bench_df["Nifty 50"].iloc[-1] - 100
-        alpha = port_ret - nifty_ret
+        last       = bench_df.iloc[-1]
+        invested_f = last["Invested"]
+        port_ret   = (last["Portfolio"]   - invested_f) / invested_f * 100
+        nifty_ret  = (last["Nifty_Equiv"] - invested_f) / invested_f * 100
+        alpha      = port_ret - nifty_ret
 
-        b1, b2, b3 = st.columns(3)
-        b1.metric("Portfolio Return", f"{port_ret:+.1f}%")
-        b2.metric("Nifty 50 Return", f"{nifty_ret:+.1f}%")
-        b3.metric("Alpha (vs Nifty)", f"{alpha:+.1f}%",
-                  delta_color="normal")
+        b1, b2, b3, b4 = st.columns(4)
+        b1.metric("Portfolio Value",  fmt_inr(last["Portfolio"]))
+        b2.metric("Total Invested",   fmt_inr(invested_f))
+        b3.metric("Portfolio Return", f"{port_ret:+.1f}%")
+        b4.metric("Alpha vs Nifty",   f"{alpha:+.1f}%")
 
         fig_bench = go.Figure()
+        # Invested capital baseline
+        fig_bench.add_trace(go.Scatter(
+            x=bench_df.index, y=bench_df["Invested"],
+            name="Invested Capital", line=dict(color=theme.AMBER, width=1.5, dash="dot"),
+        ))
+        # Nifty equivalent
+        fig_bench.add_trace(go.Scatter(
+            x=bench_df.index, y=bench_df["Nifty_Equiv"],
+            name="Nifty 50 (same capital)", line=dict(color=theme.TEXT_MUTED, width=1.8, dash="dash"),
+        ))
+        # Portfolio
         fig_bench.add_trace(go.Scatter(
             x=bench_df.index, y=bench_df["Portfolio"],
             name="My Portfolio", line=dict(color=theme.ACCENT_TEAL, width=2.5),
-            fill="tozeroy", fillcolor="rgba(0,210,180,0.07)",
+            fill="tonexty",
+            fillcolor="rgba(0,210,180,0.06)",
         ))
-        fig_bench.add_trace(go.Scatter(
-            x=bench_df.index, y=bench_df["Nifty 50"],
-            name="Nifty 50", line=dict(color=theme.TEXT_MUTED, width=1.5, dash="dot")
-        ))
-        fig_bench.add_hline(y=100, line_dash="dot", line_color=theme.BORDER_MID, opacity=0.6)
         fig_bench.update_layout(**{**theme.PLOTLY_LAYOUT,
-            "height": 350,
+            "height": 380,
             "margin": dict(t=10, b=10),
-            "yaxis_title": "Normalized value (base 100)",
+            "yaxis_title": "Value (₹)",
+            "yaxis": dict(tickformat=",.0f", gridcolor=theme.BORDER,
+                          tickfont=dict(color=theme.TEXT_SEC)),
             "legend": dict(orientation="h", y=1.08, bgcolor="rgba(0,0,0,0)"),
+            "hovermode": "x unified",
         })
         st.plotly_chart(fig_bench, use_container_width=True)
+        st.caption(
+            f"Nifty return on same capital: {nifty_ret:+.1f}%  ·  "
+            f"Your alpha: {alpha:+.1f}%  ·  "
+            f"Nifty value if invested same way: {fmt_inr(last['Nifty_Equiv'])}"
+        )
     else:
         st.info("Could not load benchmark data. Check internet connection.")
 
