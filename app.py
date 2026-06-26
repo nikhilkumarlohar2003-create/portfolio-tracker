@@ -817,7 +817,7 @@ if page == "Dashboard":
 elif page == "Portfolio":
     st.title("Portfolio Management")
 
-    tab1, tab2, tab3 = st.tabs(["Holdings", "Add / Edit", "Transaction History"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Holdings", "Add / Edit", "Transaction History", "Company Deep Dive"])
 
     with tab1:
         holdings = db.get_holdings()
@@ -900,6 +900,261 @@ elif page == "Portfolio":
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("No transactions logged yet.")
+
+
+    # ── tab4: Company Deep Dive ──────────────────────────────────────────────
+    with tab4:
+        holdings_dd = db.get_holdings()
+        if not holdings_dd:
+            st.info("Add holdings first.")
+        else:
+            sym_map = {
+                f"{h['symbol']} — {h.get('company_name', '')}": h
+                for h in holdings_dd
+            }
+            selected_label = st.selectbox(
+                "Select a company",
+                list(sym_map.keys()),
+                label_visibility="collapsed",
+            )
+            h = sym_map[selected_label]
+            sel_sym   = h["symbol"]
+            sel_name  = h.get("company_name", sel_sym)
+            sel_qty   = float(h["quantity"])
+            sel_avg   = float(h["avg_buy_price"])
+            sel_date  = h.get("buy_date", "")
+
+            # ── live price ───────────────────────────────────────────────
+            with st.spinner("Fetching price…"):
+                price_info = sd.get_stock_info(sel_sym)
+            cmp   = float(price_info.get("current_price") or 0)
+            pnl   = (cmp - sel_avg) * sel_qty
+            pnl_p = ((cmp - sel_avg) / sel_avg * 100) if sel_avg else 0
+
+            # holding period
+            try:
+                hdays = (datetime.now() - datetime.strptime(sel_date, "%Y-%m-%d")).days
+                hold_str = f"{hdays // 365}y {(hdays % 365) // 30}m" if hdays >= 365 else f"{hdays // 30}m {hdays % 30}d"
+            except Exception:
+                hold_str = "—"
+
+            # XIRR for this stock
+            sym_txns = db.get_transactions(symbol=sel_sym)
+            cf = []
+            for t in sym_txns:
+                if t["action"] in ("BUY", "BONUS"):
+                    cf.append((t["date"], -float(t["price"] or 0) * float(t["quantity"])))
+                elif t["action"] == "SELL":
+                    cf.append((t["date"], float(t["price"] or 0) * float(t["quantity"])))
+            if cmp and sel_qty:
+                cf.append((str(date.today()), cmp * sel_qty))
+            xirr_val = calculate_xirr(cf)
+
+            # ── investment stats row ──────────────────────────────────────
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+            pnl_color  = theme.GREEN if pnl >= 0 else theme.RED
+            pnl_arrow  = "▲" if pnl >= 0 else "▼"
+            stats_html = (
+                f'<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">'
+            )
+            for label, val in [
+                ("QUANTITY",    f"{int(sel_qty)} shares"),
+                ("AVG COST",    f"₹{sel_avg:,.2f}"),
+                ("CMP",         f"₹{cmp:,.2f}"),
+                ("INVESTED",    f"₹{sel_avg * sel_qty:,.0f}"),
+                ("CURRENT VAL", f"₹{cmp * sel_qty:,.0f}"),
+                ("P&L",         f"{pnl_arrow} ₹{abs(pnl):,.0f} ({abs(pnl_p):.1f}%)"),
+                ("XIRR",        f"{xirr_val * 100:.1f}%" if xirr_val else "—"),
+                ("HELD FOR",    hold_str),
+            ]:
+                color = pnl_color if label == "P&L" else theme.TEXT_PRI
+                stats_html += (
+                    f'<div style="background:{theme.BG_CARD};border:1px solid {theme.BORDER};'
+                    f'border-radius:10px;padding:10px 16px;min-width:110px">'
+                    f'<div style="font-size:9px;font-weight:600;color:{theme.TEXT_MUTED};'
+                    f'text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">{label}</div>'
+                    f'<div style="font-size:14px;font-weight:600;color:{color}">{val}</div>'
+                    f'</div>'
+                )
+            stats_html += '</div>'
+            st.markdown(stats_html, unsafe_allow_html=True)
+
+            # ── important dates ────────────────────────────────────────────
+            theme.section_header("Upcoming Important Dates")
+            with st.spinner("Fetching corporate events…"):
+                ev = sd.get_corporate_events(sel_sym)
+            q_dates = sd.get_estimated_results_dates()
+
+            date_events = []
+            today_dt = datetime.now()
+            for key, label, ev_type in [
+                ("ex_dividend_date", "Ex-Dividend Date", "dividend"),
+                ("dividend_date",    "Dividend Payment", "dividend"),
+                ("earnings_date",    "Earnings / Results", "results"),
+            ]:
+                if ev.get(key):
+                    try:
+                        dt   = datetime.strptime(ev[key][:10], "%Y-%m-%d")
+                        days = (dt - today_dt).days
+                        detail = f"₹{ev['last_dividend']:.2f}/share" if key == "ex_dividend_date" and ev.get("last_dividend") else ""
+                        date_events.append({"date": ev[key][:10], "label": label,
+                                            "detail": detail, "days": days, "type": ev_type})
+                    except Exception:
+                        pass
+            for q in q_dates:
+                date_events.append({"date": q["deadline"], "label": f"{q['quarter']} Results Deadline",
+                                    "detail": f"SEBI · {q['period']}", "days": q["days_away"], "type": "results_est"})
+
+            if date_events:
+                TYPE_C = {"dividend": theme.ACCENT_TEAL, "results": theme.ACCENT_BLUE, "results_est": theme.AMBER}
+                dates_html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">'
+                for de in sorted(date_events, key=lambda x: x["date"]):
+                    c = TYPE_C.get(de["type"], theme.TEXT_MUTED)
+                    urg = theme.RED if 0 <= de["days"] <= 14 else (theme.AMBER if de["days"] <= 45 else theme.TEXT_MUTED)
+                    dates_html += (
+                        f'<div style="background:{theme.BG_CARD};border:1px solid {c}40;'
+                        f'border-radius:10px;padding:10px 14px;min-width:170px">'
+                        f'<div style="font-size:9px;font-weight:700;color:{c};text-transform:uppercase;'
+                        f'letter-spacing:0.08em;margin-bottom:4px">{de["label"]}</div>'
+                        f'<div style="font-size:14px;font-weight:600;color:{theme.TEXT_PRI}">{de["date"]}</div>'
+                        f'<div style="font-size:11px;color:{urg};margin-top:2px">'
+                        f'{"in " + str(de["days"]) + " days" if de["days"] >= 0 else str(abs(de["days"])) + "d ago"}'
+                        f'{" · " + de["detail"] if de["detail"] else ""}</div>'
+                        f'</div>'
+                    )
+                dates_html += '</div>'
+                st.markdown(dates_html, unsafe_allow_html=True)
+            else:
+                st.caption("No upcoming corporate event data available.")
+
+            # ── research documents ─────────────────────────────────────────
+            theme.section_header("Research Documents",
+                                 f"uploaded for {sel_sym}")
+            company_docs = db.get_documents(symbol=sel_sym)
+            real_docs    = [d for d in company_docs if d["doc_type"] != "AI Company Synthesis"]
+            synthesis_rec = next((d for d in company_docs if d["doc_type"] == "AI Company Synthesis"), None)
+
+            if real_docs:
+                for doc in real_docs:
+                    period = f"{doc.get('year', '')} {doc.get('quarter') or ''}".strip()
+                    has_analysis = bool(doc.get("analysis"))
+                    doc_html = (
+                        f'<div style="display:flex;align-items:center;justify-content:space-between;'
+                        f'padding:9px 14px;background:{theme.BG_CARD};border-radius:8px;'
+                        f'border-left:3px solid {theme.ACCENT_BLUE};margin-bottom:5px">'
+                        f'<div>'
+                        f'<span style="font-size:13px;font-weight:600;color:{theme.TEXT_PRI}">📄 {doc["filename"]}</span>'
+                        f'<span style="font-size:11px;color:{theme.TEXT_MUTED};margin-left:10px">{doc["doc_type"]} · {period}</span>'
+                        f'</div>'
+                        f'<span style="font-size:10px;color:{"" + theme.GREEN if has_analysis else theme.AMBER}">'
+                        f'{"✓ Analysed" if has_analysis else "⚠ Not analysed"}</span>'
+                        f'</div>'
+                    )
+                    st.markdown(doc_html, unsafe_allow_html=True)
+                    if has_analysis:
+                        with st.expander(f"View analysis — {doc['doc_type']} {period}"):
+                            st.markdown(doc["analysis"])
+            else:
+                st.info(f"No documents uploaded for {sel_sym} yet. Upload via Document Analysis tab.")
+
+            # inline upload shortcut
+            with st.expander("+ Upload a new document for this company"):
+                with st.form(f"quick_upload_{sel_sym}"):
+                    uc1, uc2 = st.columns(2)
+                    u_type    = uc1.selectbox("Document Type", ["Annual Report", "Quarterly Result (Q1)",
+                                              "Quarterly Result (Q2)", "Quarterly Result (Q3)",
+                                              "Quarterly Result (Q4)", "Concall Transcript",
+                                              "Investor Presentation"])
+                    u_year    = uc2.number_input("Year", min_value=2000, max_value=2030,
+                                                 value=datetime.now().year)
+                    u_quarter = st.selectbox("Quarter", ["—", "Q1", "Q2", "Q3", "Q4"])
+                    u_pdf     = st.file_uploader("PDF file", type=["pdf"],
+                                                 key=f"pdf_upload_{sel_sym}")
+                    u_submit  = st.form_submit_button("Upload & Analyse")
+
+                if u_submit and u_pdf:
+                    safe_name  = f"{sel_sym}_{u_type.replace(' ','_')}_{u_year}.pdf"
+                    pdf_bytes  = u_pdf.read()
+                    import database as _db_mod
+                    filepath   = safe_name if _db_mod._USE_CLOUD else os.path.join(UPLOADS_DIR, safe_name)
+                    if not _db_mod._USE_CLOUD:
+                        with open(filepath, "wb") as f:
+                            f.write(pdf_bytes)
+                    quarter_val = None if u_quarter == "—" else u_quarter
+                    db.save_document(sel_sym, u_type, safe_name, filepath, u_year, quarter_val)
+                    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+                    if api_key:
+                        with st.spinner("Analysing document…"):
+                            analysis_text, metrics = ai.analyze_document(
+                                pdf_bytes if _db_mod._USE_CLOUD else filepath,
+                                sel_sym, sel_name, u_type,
+                                f"{u_year} {quarter_val or ''}".strip()
+                            )
+                        new_doc = db.get_documents(symbol=sel_sym)
+                        for nd in new_doc:
+                            if nd["filename"] == safe_name and not nd.get("analysis"):
+                                db.update_document_analysis(nd["id"], analysis_text, metrics)
+                                break
+                        st.success("Document uploaded and analysed.")
+                    else:
+                        st.success("Document uploaded. Add ANTHROPIC_API_KEY to analyse it.")
+                    st.rerun()
+
+            # ── AI company synthesis ───────────────────────────────────────
+            theme.section_header("AI Company Synthesis",
+                                 f"{len(real_docs)} document(s) · personalised to your position")
+
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            analysed_docs = [d for d in real_docs if d.get("analysis")]
+
+            if synthesis_rec and synthesis_rec.get("analysis"):
+                st.markdown(synthesis_rec["analysis"])
+                st.caption(f"Last generated: {synthesis_rec.get('year', '')} · click Refresh to update")
+                if st.button("🔄 Refresh Analysis", key=f"refresh_synth_{sel_sym}"):
+                    if not analysed_docs:
+                        st.warning("Analyse at least one document first.")
+                    elif not api_key:
+                        st.warning("ANTHROPIC_API_KEY not set.")
+                    else:
+                        analyses_in = [{"doc_type": d["doc_type"],
+                                        "period": f"{d.get('year','')} {d.get('quarter') or ''}".strip(),
+                                        "analysis": d["analysis"]} for d in analysed_docs]
+                        with st.spinner("Generating synthesis…"):
+                            synth = ai.synthesize_company(
+                                sel_sym, sel_name, sel_qty, sel_avg, cmp,
+                                hold_str, analyses_in
+                            )
+                        db.update_document_analysis(synthesis_rec["id"], synth, "{}")
+                        st.success("Synthesis updated.")
+                        st.rerun()
+
+            elif analysed_docs:
+                st.info(f"You have {len(analysed_docs)} analysed document(s). Click below to generate a full synthesis.")
+                if st.button("Generate AI Synthesis", key=f"gen_synth_{sel_sym}",
+                             type="primary"):
+                    if not api_key:
+                        st.error("ANTHROPIC_API_KEY not set.")
+                    else:
+                        analyses_in = [{"doc_type": d["doc_type"],
+                                        "period": f"{d.get('year','')} {d.get('quarter') or ''}".strip(),
+                                        "analysis": d["analysis"]} for d in analysed_docs]
+                        with st.spinner("Claude is synthesising all documents for this company…"):
+                            synth = ai.synthesize_company(
+                                sel_sym, sel_name, sel_qty, sel_avg, cmp,
+                                hold_str, analyses_in
+                            )
+                        db.save_document(sel_sym, "AI Company Synthesis",
+                                         f"{sel_sym}_synthesis.txt", "", datetime.now().year, None)
+                        fresh_docs = db.get_documents(symbol=sel_sym)
+                        new_rec = next((d for d in fresh_docs
+                                        if d["doc_type"] == "AI Company Synthesis"
+                                        and not d.get("analysis")), None)
+                        if new_rec:
+                            db.update_document_analysis(new_rec["id"], synth, "{}")
+                        st.success("Synthesis generated.")
+                        st.rerun()
+            else:
+                st.info("Upload and analyse at least one document (annual report or quarterly result) to get an AI synthesis.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
