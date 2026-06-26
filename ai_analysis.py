@@ -15,7 +15,13 @@ def get_client() -> anthropic.Anthropic:
     if _client is None:
         api_key = os.getenv("ANTHROPIC_API_KEY", "")
         if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY not set. Add it to your .env file.")
+            try:
+                import streamlit as st
+                api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+            except Exception:
+                pass
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY not set.")
         _client = anthropic.Anthropic(api_key=api_key)
     return _client
 
