@@ -16,7 +16,7 @@ if _USE_CLOUD:
         init_db, add_holding, update_holding, delete_holding, get_holdings,
         add_transaction, get_transactions,
         add_alert, get_alerts, trigger_alert, delete_alert,
-        save_document, update_document_analysis, get_documents,
+        save_document, update_document_analysis, get_documents, delete_document,
         add_watchlist, get_watchlist, remove_watchlist,
     )
 else:
@@ -24,6 +24,6 @@ else:
         init_db, add_holding, update_holding, delete_holding, get_holdings,
         add_transaction, get_transactions,
         add_alert, get_alerts, trigger_alert, delete_alert,
-        save_document, update_document_analysis, get_documents,
+        save_document, update_document_analysis, get_documents, delete_document,
         add_watchlist, get_watchlist, remove_watchlist,
     )

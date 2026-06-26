@@ -201,6 +201,13 @@ def get_documents(symbol=None):
     return [dict(r) for r in rows]
 
 
+def delete_document(doc_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    conn.commit()
+    conn.close()
+
+
 def add_watchlist(symbol, company_name):
     conn = get_conn()
     try:

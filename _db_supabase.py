@@ -109,6 +109,10 @@ def get_documents(symbol=None):
     return q.execute().data or []
 
 
+def delete_document(doc_id):
+    _get().table("documents").delete().eq("id", doc_id).execute()
+
+
 def add_watchlist(symbol, company_name):
     try:
         _get().table("watchlist").insert({

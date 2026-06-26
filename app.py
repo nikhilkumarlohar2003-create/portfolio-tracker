@@ -1036,23 +1036,34 @@ elif page == "Portfolio":
 
             if real_docs:
                 for doc in real_docs:
-                    period = f"{doc.get('year', '')} {doc.get('quarter') or ''}".strip()
+                    period       = f"{doc.get('year', '')} {doc.get('quarter') or ''}".strip()
                     has_analysis = bool(doc.get("analysis"))
-                    doc_html = (
-                        f'<div style="display:flex;align-items:center;justify-content:space-between;'
-                        f'padding:9px 14px;background:{theme.BG_CARD};border-radius:8px;'
-                        f'border-left:3px solid {theme.ACCENT_BLUE};margin-bottom:5px">'
-                        f'<div>'
-                        f'<span style="font-size:13px;font-weight:600;color:{theme.TEXT_PRI}">📄 {doc["filename"]}</span>'
-                        f'<span style="font-size:11px;color:{theme.TEXT_MUTED};margin-left:10px">{doc["doc_type"]} · {period}</span>'
-                        f'</div>'
-                        f'<span style="font-size:10px;color:{"" + theme.GREEN if has_analysis else theme.AMBER}">'
-                        f'{"✓ Analysed" if has_analysis else "⚠ Not analysed"}</span>'
-                        f'</div>'
-                    )
-                    st.markdown(doc_html, unsafe_allow_html=True)
-                    if has_analysis:
-                        with st.expander(f"View analysis — {doc['doc_type']} {period}"):
+                    d_col1, d_col2, d_col3 = st.columns([5, 1, 1])
+                    with d_col1:
+                        status_color = theme.GREEN if has_analysis else theme.AMBER
+                        status_text  = "✓ Analysed" if has_analysis else "⚠ Not analysed"
+                        st.markdown(
+                            f'<div style="padding:9px 14px;background:{theme.BG_CARD};border-radius:8px;'
+                            f'border-left:3px solid {theme.ACCENT_BLUE}">'
+                            f'<span style="font-size:13px;font-weight:600;color:{theme.TEXT_PRI}">📄 {doc["filename"]}</span>'
+                            f'<span style="font-size:11px;color:{theme.TEXT_MUTED};margin-left:10px">'
+                            f'{doc["doc_type"]} · {period}</span>'
+                            f'<span style="font-size:10px;color:{status_color};margin-left:10px">{status_text}</span>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+                    with d_col2:
+                        if has_analysis:
+                            if st.button("View", key=f"view_doc_{doc['id']}"):
+                                st.session_state[f"show_doc_{doc['id']}"] = \
+                                    not st.session_state.get(f"show_doc_{doc['id']}", False)
+                    with d_col3:
+                        if st.button("Delete", key=f"del_doc_{doc['id']}"):
+                            db.delete_document(doc["id"])
+                            st.rerun()
+
+                    if st.session_state.get(f"show_doc_{doc['id']}", False) and has_analysis:
+                        with st.expander(f"Analysis — {doc['doc_type']} {period}", expanded=True):
                             st.markdown(doc["analysis"])
             else:
                 st.info(f"No documents uploaded for {sel_sym} yet. Upload via Document Analysis tab.")
