@@ -1094,33 +1094,44 @@ elif page == "Portfolio":
                                                  key=f"pdf_upload_{sel_sym}")
                     u_submit  = st.form_submit_button("Upload & Analyse")
 
-                if u_submit and u_pdf:
-                    safe_name  = f"{sel_sym}_{u_type.replace(' ','_')}_{u_year}.pdf"
-                    pdf_bytes  = u_pdf.read()
-                    import database as _db_mod
-                    filepath   = safe_name if _db_mod._USE_CLOUD else os.path.join(UPLOADS_DIR, safe_name)
-                    if not _db_mod._USE_CLOUD:
-                        with open(filepath, "wb") as f:
-                            f.write(pdf_bytes)
-                    quarter_val = None if u_quarter == "—" else u_quarter
-                    db.save_document(sel_sym, u_type, safe_name, filepath, u_year, quarter_val)
-                    api_key = get_anthropic_key()
-                    if api_key:
-                        with st.spinner("Analysing document…"):
-                            analysis_text, metrics = ai.analyze_document(
-                                pdf_bytes if _db_mod._USE_CLOUD else filepath,
-                                sel_sym, sel_name, u_type,
-                                f"{u_year} {quarter_val or ''}".strip()
-                            )
-                        new_doc = db.get_documents(symbol=sel_sym)
-                        for nd in new_doc:
-                            if nd["filename"] == safe_name and not nd.get("analysis"):
-                                db.update_document_analysis(nd["id"], analysis_text, metrics)
-                                break
-                        st.success("Document uploaded and analysed.")
+                if u_submit:
+                    if not u_pdf:
+                        st.error("Please select a PDF file before clicking Upload.")
                     else:
-                        st.success("Document uploaded. Add ANTHROPIC_API_KEY to analyse it.")
-                    st.rerun()
+                        try:
+                            import database as _db_mod
+                            safe_name   = f"{sel_sym}_{u_type.replace(' ','_').replace('(','').replace(')','').replace('/','_')}_{u_year}.pdf"
+                            pdf_bytes   = u_pdf.getvalue()   # getvalue() works even after read()
+                            quarter_val = None if u_quarter == "—" else u_quarter
+                            filepath    = safe_name if _db_mod._USE_CLOUD else os.path.join(UPLOADS_DIR, safe_name)
+
+                            if not _db_mod._USE_CLOUD:
+                                with open(filepath, "wb") as f:
+                                    f.write(pdf_bytes)
+
+                            # save record first
+                            db.save_document(sel_sym, u_type, safe_name, filepath, u_year, quarter_val)
+                            st.info("Document saved. Running AI analysis…")
+
+                            api_key = get_anthropic_key()
+                            if not api_key:
+                                st.error("ANTHROPIC_API_KEY not found in secrets. Add it in Streamlit → Manage app → Secrets.")
+                            else:
+                                with st.spinner("Claude is analysing the document (may take 30–60 seconds)…"):
+                                    analysis_text, metrics = ai.analyze_document(
+                                        pdf_bytes,
+                                        sel_sym, sel_name, u_type,
+                                        f"{u_year} {quarter_val or ''}".strip()
+                                    )
+                                # find the freshly saved record and attach analysis
+                                for nd in db.get_documents(symbol=sel_sym):
+                                    if nd["filename"] == safe_name and not nd.get("analysis"):
+                                        db.update_document_analysis(nd["id"], analysis_text, metrics)
+                                        break
+                                st.success("Document uploaded and analysed successfully!")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Error during upload/analysis: {e}")
 
             # ── AI company synthesis ───────────────────────────────────────
             theme.section_header("AI Company Synthesis",
