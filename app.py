@@ -61,6 +61,17 @@ st.sidebar.markdown(
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+def get_anthropic_key() -> str:
+    """Return Anthropic API key from env or st.secrets (cloud)."""
+    key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not key:
+        try:
+            key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        except Exception:
+            pass
+    return key
+
+
 @st.cache_data(ttl=300)
 def fetch_prices(symbols: tuple) -> dict:
     return sd.get_multiple_prices(list(symbols))
@@ -1093,7 +1104,7 @@ elif page == "Portfolio":
                             f.write(pdf_bytes)
                     quarter_val = None if u_quarter == "—" else u_quarter
                     db.save_document(sel_sym, u_type, safe_name, filepath, u_year, quarter_val)
-                    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+                    api_key = get_anthropic_key()
                     if api_key:
                         with st.spinner("Analysing document…"):
                             analysis_text, metrics = ai.analyze_document(
@@ -1115,7 +1126,7 @@ elif page == "Portfolio":
             theme.section_header("AI Company Synthesis",
                                  f"{len(real_docs)} document(s) · personalised to your position")
 
-            api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            api_key = get_anthropic_key()
             analysed_docs = [d for d in real_docs if d.get("analysis")]
 
             if synthesis_rec and synthesis_rec.get("analysis"):
@@ -1500,7 +1511,7 @@ elif page == "Document Analysis":
     st.title("Document Analysis")
     st.caption("Upload annual reports or quarterly results — Claude will analyse them for long-term investing insights.")
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = get_anthropic_key()
     if not api_key:
         st.warning("Add your Anthropic API key to a `.env` file in the project folder: `ANTHROPIC_API_KEY=sk-ant-...`")
 
