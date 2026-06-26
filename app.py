@@ -63,10 +63,10 @@ st.sidebar.markdown(
 
 def get_anthropic_key() -> str:
     """Return Anthropic API key from env or st.secrets (cloud)."""
-    key = os.getenv("ANTHROPIC_API_KEY", "")
+    key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not key:
         try:
-            key = st.secrets.get("ANTHROPIC_API_KEY", "")
+            key = str(st.secrets.get("ANTHROPIC_API_KEY", "")).strip()
         except Exception:
             pass
     return key
